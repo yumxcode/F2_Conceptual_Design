@@ -12,6 +12,8 @@ mass, and say which actuators (fitted trend or real catalogue parts) cover it.
     energy.py      electrical power, battery, cost of transport
     sizing.py      the mass loop (evaluate)
     sweep.py       grid sweeps and ranking
+    reach.py       reach constraints; the arm length that meets them
+    design.py      proportions that suit fixed modules and reach
     reference.py   published humanoids from the survey; benchmark
     export.py      parameter overrides for Draft's humanoid generator
     report.py      HTML reports

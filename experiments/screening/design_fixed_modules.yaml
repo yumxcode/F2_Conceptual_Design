@@ -1,0 +1,51 @@
+# 正向寻优：身高、任务场景、（部分）关节模组已定 → 求最佳腿长、大小腿比例、脚长、臂长
+#
+#   python scripts/screen_humanoid.py design --config experiments/screening/design_fixed_modules.yaml
+#   python scripts/screen_humanoid.py design --config ... --objective margin    # 换排序目标
+#
+# 输出 generated/screening/<name>/design_report.html：推荐尺寸表、固定模组校核、
+# 其余关节的需求与选型、搜索全貌热力图、前 10 名方案；best/ 下是推荐方案的完整报告。
+
+name: design-1p6m-fixed
+
+body:
+  height_m: 1.60
+  # 已经定死的尺寸直接写米数，就不再搜索它，例如：
+  # leg_length_m: 0.72
+  # thigh_m: 0.36
+
+tasks:
+  walk:       {speed: 1.0, max_speed: 1.5}
+  stairs:     {step_height_m: 0.15}
+  squat_lift: {enabled: true}
+  stoop_lift: {enabled: true}
+  run:        {enabled: true, speed: 2.0}
+
+payload: {hands_total_kg: 5.0}
+electrical: {runtime_h: 2.0}
+
+# 手要够到哪里：决定臂长（取满足全部要求的最短手臂）
+reach:
+  floor_pick_height_m: 0.10   # 弯腰/深蹲时手能低到 10 cm（捡地面物品）
+  shelf_height_m: 1.80        # 举手能够到 1.8 m 货架
+  # table_height_m: 0.75      # 站立作业台面（要求台面低于肘部 ≥5 cm）
+  # forward_reach_m: 0.6      # 肩到抓取点的伸展距离
+
+actuators:
+  # 已选定的模组：写目录型号，或直接写参数（数值仅为示例，请换成供应商规格）
+  # 不写的关节按需求自动选型（目录真实模组）
+  fixed:
+    knee: {name: 我的膝关节模组, tau_peak_Nm: 360, tau_cont_Nm: 120, omega_NL_rad_s: 16, mass_kg: 3.2, gear: 18}
+    hip_pitch: RMD-X12-P20-320-E
+    hip_roll: RMD-X8-P33-150-E
+    ankle_drive: AKE90-8          # 并联踝的两个电机
+  # extra_catalog: experiments/screening/my_actuators.yaml   # 你的供应商清单
+
+design:
+  objective: mass               # mass 最轻 | margin 固定模组余量最大 | cot 最省电 | balanced 折中
+  search:                       # 搜索范围（{min, max, step} 或取值列表）
+    body.leg_ratio: {min: 0.38, max: 0.52, step: 0.02}
+    body.thigh_fraction: {min: 0.46, max: 0.54, step: 0.04}
+    body.foot_length_ratio: [0.14, 0.17]
+  refine: true                  # 在最优点附近再细化一轮
+  free_mode: catalog            # 未固定关节：catalog 用目录真实模组（与最终结果一致）| trend 更快

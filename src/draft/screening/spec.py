@@ -32,6 +32,27 @@ DEFAULTS: dict = {
         "heel_fraction": 0.25,       # share of the foot behind the ankle
         "hip_width_ratio": 0.13,     # between the hip joint centres
         "shoulder_width_ratio": 0.26,
+        # Absolute lengths (m). When stated they win over the ratios above
+        # (converted at load); leave null to use the ratio.
+        "leg_length_m": None,        # hip joint -> ankle joint
+        "thigh_m": None,             # hip -> knee
+        "upper_arm_m": None,         # shoulder -> elbow
+        "forearm_m": None,           # elbow -> wrist
+        "hand_m": None,              # wrist -> grasp point
+        "foot_length_m": None,
+        "hip_width_m": None,
+    },
+    # What the hands must reach. Unset (null) constraints are not checked. With
+    # `arm_from_reach`, arm length is the shortest that meets every constraint
+    # (split upper arm / forearm / hand in the ratio proportions).
+    "reach": {
+        "floor_pick_height_m": None,  # lowest grasp height (squat or stoop posture)
+        "shelf_height_m": None,       # highest grasp height, arm straight up
+        "table_height_m": None,       # work surface: must sit >= 5 cm below the elbow
+        "forward_reach_m": None,      # shoulder -> grasp point, arm straight
+        "arm_from_reach": False,
+        "arm_min_ratio": 0.30,        # bounds on the arm (shoulder -> grasp) / height
+        "arm_max_ratio": 0.55,
     },
     "dof": {
         "waist": ["yaw"],            # any of yaw, roll, pitch
@@ -119,6 +140,11 @@ DEFAULTS: dict = {
                               "wrist_yaw": 6.0, "wrist_pitch": 6.0, "wrist_roll": 6.0},
         "speed_floor_load": 0.3,
         "groups": {},                # name -> [joint, ...]: one part number for the group
+        # Modules you have already chosen, per actuator slot: a catalogue (or
+        # extra_catalog) name, or your own numbers {tau_peak_Nm, omega_NL_rad_s,
+        # mass_kg, [tau_cont_Nm, gear, rotor_inertia_kgm2, rotor_inertia_kind]}.
+        # Fixed slots are checked, not sized. With a parallel ankle, use `ankle_drive`.
+        "fixed": {},
         "top_n": 3,
     },
     "convergence": {"max_iter": 40, "tol": 3e-3, "max_mass_kg": 400.0},
@@ -137,7 +163,33 @@ PAIRED = {"hip_pitch", "hip_roll", "hip_yaw", "knee", "ankle_pitch", "ankle_roll
 TASK_NAMES = tuple(DEFAULTS["tasks"])
 
 _OPEN_KEYS = {("actuators", "groups"), ("actuators", "peak_to_continuous"),
-              ("actuators", "speed_floor_rad_s")}
+              ("actuators", "speed_floor_rad_s"), ("actuators", "fixed")}
+
+#: absolute body key -> (ratio key it sets, how)
+_ABSOLUTE = ("leg_length_m", "thigh_m", "upper_arm_m", "forearm_m", "hand_m",
+             "foot_length_m", "hip_width_m")
+
+
+def resolve_absolute(spec: dict) -> dict:
+    """Turn stated absolute lengths into the ratios the models use (in place)."""
+    b = spec["body"]
+    H = float(b["height_m"])
+    if b.get("leg_length_m"):
+        b["leg_ratio"] = float(b["leg_length_m"]) / H
+    if b.get("thigh_m"):
+        leg = b["leg_ratio"] * H
+        b["thigh_fraction"] = float(b["thigh_m"]) / leg
+    for key, ratio in (("upper_arm_m", "upper_arm_ratio"), ("forearm_m", "forearm_ratio"),
+                       ("hand_m", "hand_ratio"), ("foot_length_m", "foot_length_ratio"),
+                       ("hip_width_m", "hip_width_ratio")):
+        if b.get(key):
+            b[ratio] = float(b[key]) / H
+    return spec
+
+
+def absolute_arm(spec: dict) -> bool:
+    b = spec["body"]
+    return any(b.get(k) for k in ("upper_arm_m", "forearm_m", "hand_m"))
 
 
 def _merge(base: Any, over: Any, path: tuple = ()) -> Any:
@@ -154,7 +206,7 @@ def _merge(base: Any, over: Any, path: tuple = ()) -> Any:
 
 def make_spec(overrides: Optional[dict] = None) -> dict:
     """Defaults merged with ``overrides`` (validated)."""
-    spec = _merge(copy.deepcopy(DEFAULTS), overrides or {})
+    spec = resolve_absolute(_merge(copy.deepcopy(DEFAULTS), overrides or {}))
     validate(spec)
     return spec
 
@@ -163,9 +215,11 @@ def load_spec(path: str | Path, overrides: Optional[dict] = None) -> dict:
     """Read a concept YAML; ``overrides`` (dotted or nested) are applied on top."""
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     data.pop("sweep", None)
+    data.pop("design", None)
     spec = _merge(copy.deepcopy(DEFAULTS), data)
     if overrides:
         spec = _merge(spec, overrides)
+    resolve_absolute(spec)
     validate(spec)
     return spec
 
@@ -225,6 +279,23 @@ def validate(spec: dict) -> None:
     for x in spec["mission"]:
         if x["task"] not in TASK_NAMES:
             raise ValueError(f"mission: unknown task {x['task']!r}")
+    for slot, part in (spec["actuators"].get("fixed") or {}).items():
+        if slot not in JOINTS and slot != "ankle_drive":
+            raise ValueError(f"actuators.fixed: unknown slot {slot!r}")
+        if m["ankle"] == "parallel" and slot in ("ankle_pitch", "ankle_roll"):
+            raise ValueError("actuators.fixed: a parallel ankle is one `ankle_drive` "
+                             "motor type; fix that instead of ankle_pitch/ankle_roll")
+        if m["ankle"] == "serial" and slot == "ankle_drive":
+            raise ValueError("actuators.fixed: `ankle_drive` needs mechanism.ankle: parallel")
+        if not isinstance(part, (str, dict)):
+            raise ValueError(f"actuators.fixed.{slot}: a part name or a mapping of numbers")
+        if isinstance(part, dict):
+            for k in ("tau_peak_Nm", "omega_NL_rad_s", "mass_kg"):
+                if k not in part:
+                    raise ValueError(f"actuators.fixed.{slot} lacks {k}")
+    r = spec["reach"]
+    if not 0.1 <= r["arm_min_ratio"] < r["arm_max_ratio"] <= 0.8:
+        raise ValueError("reach.arm_min_ratio / arm_max_ratio out of range")
 
 
 def active_joints(spec: dict) -> list[str]:

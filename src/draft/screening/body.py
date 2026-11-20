@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 
 from ..trends import link_fits
 from .planar import PlanarBody, PlanarTree, lump, rod_inertia
-from .spec import active_joints
+from .spec import absolute_arm, active_joints
 
 _LINKS = None
 
@@ -67,6 +67,12 @@ class Geometry:
     heel: float
     hip_width: float
     shoulder_width: float
+    arm_note: str = ""        # set when the arm length came from reach constraints
+
+    @property
+    def arm(self) -> float:
+        """Shoulder joint -> grasp point."""
+        return self.upper_arm + self.forearm + self.hand
 
     @property
     def leg(self) -> float:
@@ -94,7 +100,7 @@ def geometry(spec: dict) -> Geometry:
     head_neck = b["head_neck_ratio"] * H
     h2s = H - ankle_h - leg - head_neck
     foot = b["foot_length_ratio"] * H
-    return Geometry(
+    geo = Geometry(
         height=H, ankle_h=ankle_h,
         thigh=leg * b["thigh_fraction"], shank=leg * (1 - b["thigh_fraction"]),
         hip_to_shoulder=h2s, waist=h2s * b["waist_fraction"], head_neck=head_neck,
@@ -105,6 +111,14 @@ def geometry(spec: dict) -> Geometry:
         hip_width=b["hip_width_ratio"] * H,
         shoulder_width=b["shoulder_width_ratio"] * H,
     )
+    if spec["reach"]["arm_from_reach"]:
+        # function-level import: reach.py builds on Geometry
+        from .reach import any_constraint, arm_from_reach
+        if absolute_arm(spec):
+            geo.arm_note = "已给定绝对臂长，未按够取约束推算"
+        elif any_constraint(spec):
+            geo.upper_arm, geo.forearm, geo.hand, geo.arm_note = arm_from_reach(geo, spec)
+    return geo
 
 
 #: Actuator slots: where each motor physically sits. ``parallel`` ankles replace

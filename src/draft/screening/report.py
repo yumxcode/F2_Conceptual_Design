@@ -200,7 +200,8 @@ def chart_population(points: list[dict], refs=None) -> str:
 
 
 def chart_heatmap(rows: list, xkey: str, ykey: str, value: str, label: str,
-                  fmt: str = "{:.0f}") -> str:
+                  fmt: str = "{:.0f}",
+                  bad_label: str = "not closed / an actuator beyond the frontier") -> str:
     plt = _plt()
     xs = sorted({r[xkey] for r in rows})
     ys = sorted({r[ykey] for r in rows})
@@ -229,11 +230,13 @@ def chart_heatmap(rows: list, xkey: str, ykey: str, value: str, label: str,
                 txt = fmt.format(Z[i, j]) + (" ✕" if bad[i, j] else "")
                 ax.text(j, i, txt, ha="center", va="center", fontsize=8,
                         color="white" if dark else INK)
-            else:
+            elif any(r[xkey] == xs[j] and r[ykey] == ys[i] for r in rows):
                 ax.text(j, i, "✕", ha="center", va="center", fontsize=9, color="#b42318")
+            else:
+                ax.text(j, i, "·", ha="center", va="center", fontsize=9, color=MUTED)
     cb = fig.colorbar(im, ax=ax, shrink=0.85)
     cb.set_label(label)
-    ax.set_title(label + "   (✕ = not closed / an actuator beyond the frontier)", fontsize=8,
+    ax.set_title(label + f"   (✕ = {bad_label})", fontsize=8,
                  loc="left", color=INK2)
     return _png(fig)
 
@@ -277,6 +280,10 @@ def _status(res) -> tuple[str, str]:
     if not res.closed:
         return "bad", "无法闭合"
     errs = [w for w in res.warnings() if w.get("severity") == "error"]
+    if any("固定模组" in w["name"] for w in errs):
+        return "bad", "固定模组不满足"
+    if any(w["name"].startswith("够取") for w in errs):
+        return "bad", "够取要求不满足"
     if errs:
         return "bad", "有执行器超出产品能力"
     if res.warnings():
@@ -340,7 +347,8 @@ def concept_report(res, export_path: str | None = None) -> str:
             f"{rq.peak_omega:.1f}<br><small>{_e(rq.governing('omega'))}</small>",
             f"{rq.peak_power:.0f}",
             f"{rq.thermal_rms:.1f}<br><small>{_e(rq.thermal_source)}</small>",
-            f'<span style="white-space:normal">{_e(a.name)}</span><br><small>{_e(a.vendor or a.source)}</small>',
+            f'<span style="white-space:normal">{"🔒 " if a.source == "fixed" else ""}{_e(a.name)}</span>'
+            f'<br><small>{_e("固定模组" if a.source == "fixed" else (a.vendor or a.source))}</small>',
             f"{a.tau_peak:.0f} / {a.omega_nl:.1f}",
             f"{a.mass:.2f}",
             f"{a.torque_margin:+.0%}", f"{a.thermal_margin:+.0%}" if a.thermal_margin < 98 else "∞", fe,
@@ -367,11 +375,20 @@ def concept_report(res, export_path: str | None = None) -> str:
                 ["大腿 / 小腿", f"{g.thigh:.3f} / {g.shank:.3f}"], ["踝高", f"{g.ankle_h:.3f}"],
                 ["髋—肩", f"{g.hip_to_shoulder:.3f}"], ["肩—头顶", f"{g.head_neck:.3f}"],
                 ["上臂 / 前臂 / 手", f"{g.upper_arm:.3f} / {g.forearm:.3f} / {g.hand:.3f}"],
+                ["臂长（肩—抓取点）", f"{g.arm:.3f}"],
                 ["脚长 / 脚宽（踝前 {:.3f}）".format(g.toe), f"{g.foot_length:.3f} / {g.foot_width:.3f}"],
                 ["髋宽 / 肩宽（关节间）", f"{g.hip_width:.3f} / {g.shoulder_width:.3f}"]]
     b.append('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">'
              + "<div>" + _table(["尺寸", "m"], geo_rows) + "</div>"
              + f'<div><img alt="mass" src="{chart_mass(res)}"></div></div>')
+    if g.arm_note:
+        b.append(f'<p class="sub">{_e(g.arm_note)}。</p>')
+    rc = res.reach_checks()
+    if rc:
+        b.append("<h3>够取检查</h3>")
+        b.append(_table(["要求", "结果", "说明"], [
+            [_e(c["name"]), '<span class="ok">✓</span>' if c["ok"] else '<span class="bad">✕</span>',
+             f'<span style="white-space:normal">{_e(c["note"])}</span>'] for c in rc], left_cols=3))
     b.append("<h3>放在已发布人形机器人中看</h3>")
     b.append(f'<img alt="population" src="{chart_population([{"height_m": g.height, "mass_kg": res.mass, "label": spec["name"]}])}">')
 
@@ -571,3 +588,125 @@ def write(path: Path, html_text: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(html_text, encoding="utf-8")
     return path
+
+
+# ── design (inverse) report ────────────────────────────────────────────────────
+
+def design_report(d, best_report: str | None = None) -> str:
+    from .design import dimensions
+    spec = d.base
+    res = d.best
+    b = [f"<h1>比例与尺寸寻优：{_e(spec['name'])}</h1>"]
+    t = spec["tasks"]
+    tasks_on = [k for k, v in t.items() if v.get("enabled")]
+    b.append('<p class="sub">身高 ' + f"{spec['body']['height_m']:.2f} m · 目标：" +
+             {"mass": "整机最轻", "margin": "固定模组余量最大", "cot": "步行最省电",
+              "balanced": "质量、能耗、余量折中"}[d.objective] +
+             f" · 工况：{_e('、'.join(tasks_on))} · 负载 {spec['payload']['hands_total_kg']:g} kg"
+             f" · 续航 {spec['electrical']['runtime_h']:g} h</p>")
+    if d.notes:
+        b.append('<div class="note">' + "<br>".join(_e(n) for n in d.notes) + "</div>")
+    fx = spec["actuators"].get("fixed") or {}
+    r = spec["reach"]
+    reach_txt = "，".join(f"{n} {r[k]:g} m" for k, n in (
+        ("floor_pick_height_m", "地面拾取 ≤"), ("shelf_height_m", "货架 ≥"),
+        ("table_height_m", "台面"), ("forward_reach_m", "前伸 ≥")) if r[k] is not None)
+    b.append("<h2>输入</h2>")
+    rows = [["固定模组", "，".join(f"{_e(SLOT_CN.get(k, k))}：{_e(v if isinstance(v, str) else v.get('name', '自定义'))}"
+                                  for k, v in fx.items()) or "无（全部按需求选型）"],
+            ["够取要求", _e(reach_txt) or "无"],
+            ["搜索范围", "<br>".join(f"<code>{_e(k)}</code>：{_e(v)}" for k, v in d.axes.items()) or "无"],
+            ["评估方案数", str(len(d.rows))]]
+    b.append(_table(["项目", "取值"], [[x, f'<span style="white-space:normal">{y}</span>'] for x, y in rows], left_cols=2))
+    if res is None:
+        b.append('<p class="bad">没有能闭合的方案。</p>')
+        return _page("比例寻优", "".join(b))
+    cls, label = ("ok", "找到满足全部要求的方案") if d.feasible else ("bad", "没有完全满足的方案，以下为最接近的")
+    b.append(f'<h2>推荐方案 <span class="{cls}" style="font-size:15px">{label}</span></h2>')
+    tiles = [(f"{res.mass:.1f} kg", "整机质量（目录选型）"),
+             (f"{res.concept.geo.leg:.3f} m", "腿长"),
+             (f"{res.concept.geo.arm:.3f} m", "臂长（肩—抓取点）"),
+             (f"{res.energy.battery_Wh:.0f} Wh", "电池"),
+             (f"{res.energy.cot_walk:.2f}", "步行 CoT")]
+    b.append('<div class="tiles">' + "".join(f"<div class='tile'><b>{v}</b><span>{k}</span></div>"
+                                             for v, k in tiles) + "</div>")
+    b.append("<h3>尺寸</h3>")
+    b.append(_table(["尺寸", "m", "说明"], [[_e(n), f"{v:.3f}", f'<span style="white-space:normal">{_e(note)}</span>']
+                                         for n, v, note in dimensions(res)], left_cols=1))
+    if fx:
+        b.append("<h3>固定模组校核</h3>")
+        rows = []
+        for sl in fx:
+            a = res.chosen.get(sl)
+            if a is None:
+                continue
+            ok = '<span class="ok">✓</span>' if a.feasible else '<span class="bad">✕</span>'
+            rows.append([SLOT_CN.get(sl, sl), _e(a.name), f"{a.tau_peak:.0f} / {a.omega_nl:.1f}",
+                         f"{a.torque_margin:+.0%}", f"{a.thermal_margin:+.0%}" if a.thermal_margin < 98 else "∞",
+                         ok, f'<span style="white-space:normal">{_e("；".join(a.notes))}</span>'])
+        b.append(_table(["关节", "模组", "峰值 Nm / 空载 rad/s", "扭矩裕度", "热裕度", "满足", "说明"], rows))
+    free = [sl for sl in res.chosen if sl not in fx]
+    if free:
+        b.append("<h3>其余关节的需求与选型</h3>")
+        sf = spec["actuators"]["torque_safety_factor"]
+        rows = []
+        for sl in free:
+            a, rq, tr = res.chosen[sl], res.req[sl], res.trend[sl]
+            rows.append([SLOT_CN.get(sl, sl), f"{rq.peak_tau * sf:.0f}", f"{rq.peak_omega:.1f}",
+                         f"{rq.thermal_rms * spec['actuators']['thermal_safety_factor']:.1f}",
+                         f"{tr.tau_peak:.0f} Nm / N {tr.gear:.0f} / {tr.mass:.2f} kg",
+                         f'<span style="white-space:normal">{_e(a.name)}</span>', f"{a.mass:.2f}"])
+        b.append(_table(["关节", "峰值扭矩需求 Nm（含系数）", "峰值转速 rad/s", "持续扭矩需求 Nm",
+                         "趋势规格（峰值/减速比/质量）", "目录推荐", "kg"], rows))
+    if best_report:
+        b.append(f'<p>完整的工况、能耗、扭矩–转速图见 <a href="{_e(best_report)}">推荐方案报告</a>。</p>')
+    ws = [w for w in res.warnings()]
+    if ws:
+        b.append("<h3>推荐方案的提示</h3><ul>" + "".join(
+            f"<li>{_e(w['name'])}：{_e(w.get('note', ''))}</li>" for w in ws) + "</ul>")
+
+    # landscape
+    axes = list(d.axes)
+    rows_ok = [x for x in d.rows if "error" not in x]
+    if len(axes) >= 2 and rows_ok:
+        x, y = "body.leg_ratio", "body.thigh_fraction"
+        if x in axes and y in axes:
+            # the coarse grid only (refinement points would leave holes)
+            rest = [k for k in axes if k not in (x, y)]
+            fixv = {k: min(d.axes[k], key=lambda v: abs(v - d.best_row[k])) for k in rest}
+            sub = [rr for rr in rows_ok if all(rr.get(k) == v for k, v in fixv.items())
+                   and rr.get(x) in d.axes[x] and rr.get(y) in d.axes[y]]
+            b.append("<h2>搜索全貌</h2>")
+            if fixv:
+                b.append(f'<p class="sub">固定 {_e(fixv)}；✕ = 不满足（固定模组、够取或密度前沿）。</p>')
+            for rr in sub:
+                rr["_fm"] = min((rr.get(f"{s_}_margin", 0) for s_ in d.fixed_slots), default=None)
+            bl = "a fixed module, a reach or the density frontier fails"
+            b.append(f'<img alt="mass" src="{chart_heatmap(sub, x, y, "mass_kg", "total mass (kg)", "{:.1f}", bl)}">')
+            if d.fixed_slots:
+                b.append(f'<img alt="margin" src="{chart_heatmap(sub, x, y, "_fm", "worst fixed-module torque margin", "{:+.0%}", bl)}">')
+            b.append(f'<img alt="cot" src="{chart_heatmap(sub, x, y, "cot_walk", "walking cost of transport", "{:.2f}", bl)}">')
+    ranked = sorted([x for x in d.rows if x.get("feasible")], key=lambda r_: r_["score"])
+    b.append("<h2>前 10 个可行方案</h2>")
+    if ranked:
+        head = [k.split(".")[-1] for k in axes] + ["质量 kg", "腿长 m", "臂长 m", "CoT"] + \
+               [f"{SLOT_CN.get(s_, s_)} 裕度" for s_ in d.fixed_slots]
+        b.append(_table(head, [[f"{r_[k]}" for k in axes] + [
+            f"{r_['mass_kg']:.1f}", f"{r_['leg_m']:.3f}", f"{r_['arm_m']:.3f}", f"{r_['cot_walk']:.2f}"] +
+            [f"{r_.get(f'{s_}_margin', 0):+.0%}" for s_ in d.fixed_slots] for r_ in ranked[:10]],
+            left_cols=len(axes)))
+    else:
+        b.append('<p class="warn">无。</p>')
+    bad = [x for x in d.rows if not x.get("feasible")]
+    if bad:
+        from collections import Counter
+        c = Counter()
+        for x in bad:
+            for w in (x.get("warnings") or x.get("error") or "未闭合").split("; "):
+                if w and ("不满足" in w or "不可行" in w or w.startswith("够取") or "error" in x):
+                    c[w] += 1
+        if c:
+            b.append("<h3>不可行原因统计</h3>")
+            b.append(_table(["原因", "方案数"], [[_e(k), str(v)] for k, v in c.most_common()]))
+    b.append(_assumptions())
+    return _page(f"比例寻优 {spec['name']}", "".join(b))

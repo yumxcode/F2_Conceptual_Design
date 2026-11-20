@@ -51,14 +51,27 @@ class ConceptResult:
                     out.append({**c, "task": r.label})
         for s, a in self.chosen.items():
             if not a.feasible:
-                out.append({"name": f"{s}: 执行器不可行", "note": "; ".join(a.notes),
+                what = "固定模组不满足" if a.source == "fixed" else "执行器不可行"
+                out.append({"name": f"{s}: {what}", "note": "; ".join(a.notes),
                             "severity": "error", "task": "-", "ok": False})
+        for c in self.reach_checks():
+            if not c["ok"]:
+                out.append({**c, "task": "够取"})
         if not self.energy.c_rate_ok:
             out.append({"name": "电池放电倍率", "severity": "warn", "task": self.energy.peak_task,
                         "ok": False,
                         "note": f"峰值功率需要 {self.energy.c_rate_needed:.1f}C，"
                                 f"超过设定 {self.spec['electrical']['battery_max_C']:g}C"})
         return out
+
+    def reach_checks(self) -> list[dict]:
+        from .reach import check_reach
+        return check_reach(self.concept.geo, self.spec)
+
+    @property
+    def feasible(self) -> bool:
+        """Closed, every actuator (fixed or chosen) covers its duty, every reach met."""
+        return self.closed and not any(w.get("severity") == "error" for w in self.warnings())
 
     def joint_peaks(self) -> dict:
         """Joint-level peak |torque| and |speed| over all tasks (before any
@@ -98,6 +111,13 @@ class ConceptResult:
             "converged": self.converged, "closed": self.closed,
             "n_warnings": len(self.warnings()),
             "n_infeasible_actuators": sum(1 for a in self.chosen.values() if not a.feasible),
+            "upper_arm_m": round(g.upper_arm, 3), "forearm_m": round(g.forearm, 3),
+            "hand_m": round(g.hand, 3), "arm_m": round(g.arm, 3),
+            "hip_to_shoulder_m": round(g.hip_to_shoulder, 3),
+            "foot_length_m": round(g.foot_length, 3),
+            "thigh_fraction": round(self.spec["body"]["thigh_fraction"], 3),
+            "reach_ok": all(c["ok"] for c in self.reach_checks()),
+            "feasible": self.feasible,
         }
         for s, rq in self.req.items():
             row[f"{s}_tau_Nm"] = round(rq.peak_tau, 1)
@@ -105,6 +125,8 @@ class ConceptResult:
             row[f"{s}_rms_Nm"] = round(rq.thermal_rms, 1)
             row[f"{s}_part"] = self.chosen[s].name
             row[f"{s}_part_kg"] = round(self.chosen[s].mass, 3)
+            row[f"{s}_margin"] = round(self.chosen[s].torque_margin, 3)
+            row[f"{s}_thermal_margin"] = round(min(self.chosen[s].thermal_margin, 99), 3)
         return row
 
 

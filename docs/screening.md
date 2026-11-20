@@ -14,6 +14,72 @@
 > 这是 Draft 论文之外新增的模块（`src/draft/screening/`），复用了 Draft 的拟合趋势
 > （`draft.trends`）、114 款执行器目录和 29 台人形机器人调研数据，没有改动论文代码。
 
+## 三种用法
+
+| 已知 | 想求 | 命令 | 示例配置 |
+|---|---|---|---|
+| 身高、任务场景、**尺寸**（腿长、大腿、臂长……可直接写米数） | 每个关节模组要达到的扭矩/转速/持续扭矩，目录选型，整机质量，电池，够不够得着 | `concept` | `experiments/screening/given_dimensions.yaml` |
+| 身高、任务场景、**全部或部分关节模组**、够取要求 | 最佳腿长比、大小腿比例、脚长、臂长；固定模组是否够用；其余关节的需求与选型 | `design` | `experiments/screening/design_fixed_modules.yaml` |
+| 身高范围、任务场景 | 身高 × 腿长比等参数的影响全貌，每个身高的推荐方案 | `sweep` | `experiments/screening/sweep_height_leg.yaml` |
+
+```shell
+python scripts/screen_humanoid.py concept --config experiments/screening/given_dimensions.yaml
+python scripts/screen_humanoid.py design  --config experiments/screening/design_fixed_modules.yaml
+python scripts/screen_humanoid.py design  --config ... --objective margin     # 换排序目标
+```
+
+### 输入尺寸（米数）
+
+`body` 下写 `leg_length_m`（髋关节—踝关节）、`thigh_m`、`upper_arm_m`、`forearm_m`、`hand_m`
+（腕—抓取点）、`foot_length_m`、`hip_width_m`，写了就覆盖对应比例；没写的仍按比例。
+髋—肩长度由身高减去其余部分得到。
+
+### 固定模组（`actuators.fixed`）
+
+```yaml
+actuators:
+  fixed:
+    hip_pitch: RMD-X12-P20-320-E          # 目录（或 extra_catalog）里的型号，大小写/连字符不敏感
+    knee: {name: 我的膝模组, tau_peak_Nm: 360, tau_cont_Nm: 120, omega_NL_rad_s: 16, mass_kg: 3.2, gear: 18}
+    ankle_drive: AKE90-8                  # 并联踝写 ankle_drive；串联踝写 ankle_pitch / ankle_roll
+```
+
+固定的关节只校核不改型：报告给出每个固定模组的扭矩裕度、热裕度、最紧的工况，不够时给出
+“该工况需要约多少 Nm 峰值”。没写的关节照常按需求选型。
+
+### 够取要求（`reach`）
+
+| 键 | 含义 |
+|---|---|
+| `floor_pick_height_m` | 弯腰（或深蹲，取更低者）时手能低到的高度 |
+| `shelf_height_m` | 站立举手能够到的高度 |
+| `table_height_m` | 站立作业台面，要求低于肘部至少 5 cm（限制上臂长度） |
+| `forward_reach_m` | 肩到抓取点的伸展距离 |
+
+`concept` 里只做校核；`design` 会打开 `arm_from_reach`，臂长取满足全部要求的**最短**值
+（更长只会增加肩肘扭矩），按上臂:前臂:手 = 0.17:0.14:0.07 分配。没写任何够取要求时，
+`design` 默认按“地面拾取 0.10 m + 货架 1.60 m”。
+
+### `design` 怎么找
+
+在 `design.search` 的范围内（默认腿长比 0.38–0.52、大腿占比 0.46–0.54、脚长比 0.14/0.17；
+`body` 里写了米数的变量不搜索）逐点闭合质量环，臂长由够取推出。一个点“可行”要求：
+质量环闭合、每个固定模组覆盖所有工况（含安全系数）、未固定的关节有满足的模组、够取全部满足。
+可行点按 `design.objective` 排序：
+
+- `mass`：整机最轻（默认）
+- `margin`：固定模组最差余量最大，最稳健
+- `cot`：步行最省电
+- `balanced`：三者排名的平均
+
+然后在最优点附近再细化一轮；最优点落在搜索边界时报告会提示扩大范围。没有可行点时给出最接近的方案和
+不可行原因统计（哪个固定模组、多少个方案）。`design.free_mode: catalog`（默认）让未固定关节在搜索中
+就用目录真实模组，和最终结果一致；改 `trend` 更快。
+
+输出 `design_report.html`：推荐尺寸表（全部为米）、固定模组校核、其余关节的需求与选型、
+腿长比 × 大腿占比的质量/余量/能耗热力图、前 10 名；`best/` 下是推荐方案的完整报告和 Draft 导出文件；
+`design_candidates.csv` 是全部候选。
+
 ## 快速开始
 
 ```shell
@@ -158,6 +224,7 @@ Booster T1/K1、Tien Kung、AgiBot、LimX Oli、Kuavo、EngineAI 等）的身高
 | 键 | 默认 | 作用 |
 |---|---|---|
 | `body.height_m` | 1.50 | 站立身高 |
+| `body.leg_length_m` 等 `*_m` | 无 | 直接给尺寸（米），覆盖比例 |
 | `body.leg_ratio` | 0.45 | 腿长（髋—踝）/ 身高 |
 | `body.thigh_fraction` | 0.50 | 大腿 / 腿长 |
 | `body.foot_length_ratio` | 0.15 | 脚长 / 身高 |
@@ -177,6 +244,8 @@ Booster T1/K1、Tien Kung、AgiBot、LimX Oli、Kuavo、EngineAI 等）的身高
 | `actuators.*_safety_factor` | 1.3 / 1.15 / 1.2 | 扭矩 / 转速 / 发热安全系数 |
 | `actuators.voltage_limit_factor` | 2.0 | 包络形状（1 = 目录直线） |
 | `actuators.extra_catalog` | – | 自定义模组 YAML/CSV，格式见 `experiments/screening/my_actuators.example.yaml` |
+| `actuators.fixed` | 无 | 已定的模组（型号或参数），只校核不改型 |
+| `reach.*` | 无 | 够取要求；`arm_from_reach: true` 时由它定臂长 |
 
 扫描文件就是概念 YAML 加一个 `sweep:` 块，键是点号路径，值是列表，取全组合，例如
 `mechanism.ankle_motor_location: [ankle, knee]`、`payload.hands_total_kg: [3, 5, 10]`。

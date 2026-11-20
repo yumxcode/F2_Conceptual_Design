@@ -419,4 +419,76 @@ def choose(req: dict, spec: dict, floor_mass: Optional[dict] = None
                                               "notes": c.notes + ["目录中无满足要求的模组，用趋势模组代替"]})
         else:
             chosen[s] = trend[s]
+    for s, part in fixed_parts(spec).items():
+        if s in req:
+            chosen[s] = check_fixed(req[s], part, spec)
     return chosen, trend, cands
+
+
+# ── modules fixed by the designer ──────────────────────────────────────────────
+
+def _norm(name: str) -> str:
+    return str(name).lower().replace(" ", "").replace("-", "").replace("_", "")
+
+
+def fixed_parts(spec: dict) -> dict:
+    """slot -> part entry for ``actuators.fixed`` (names looked up in the whole
+    catalogue and ``extra_catalog``, whatever ``categories`` says)."""
+    fixed = spec["actuators"].get("fixed") or {}
+    if not fixed:
+        return {}
+    pool = [dict(e) for e in load_catalog()]
+    extra = spec["actuators"].get("extra_catalog")
+    if extra:
+        pool += load_extra_catalog(extra)
+    by_name = {_norm(e["name"]): e for e in pool}
+    out = {}
+    for slot, part in fixed.items():
+        if isinstance(part, str):
+            e = by_name.get(_norm(part))
+            if e is None:
+                close = [x["name"] for x in pool if _norm(part)[:4] in _norm(x["name"])][:6]
+                raise ValueError(f"actuators.fixed.{slot}: no part named {part!r} in the "
+                                 f"catalogue or extra_catalog" +
+                                 (f" (similar: {', '.join(close)})" if close else ""))
+            out[slot] = e
+        else:
+            e = {k: (float(v) if k not in ("name", "vendor", "category", "rotor_inertia_kind")
+                     else v) for k, v in part.items()}
+            e.setdefault("name", f"自定义-{slot}")
+            e.setdefault("vendor", "custom")
+            e.setdefault("category", "custom")
+            if "OD_mm" in e and "radius_mm" not in e:
+                e["radius_mm"] = e["OD_mm"] / 2
+            out[slot] = e
+    return out
+
+
+def worst_task(rq: SlotRequirement, tau_peak: float, omega_nl: float, spec: dict
+               ) -> tuple[str, float]:
+    """The task whose samples come closest to (or go furthest past) the envelope."""
+    a = spec["actuators"]
+    worst, label = math.inf, ""
+    for d in rq.demands:
+        r = envelope_ratio(tau_peak, omega_nl, d.tau * a["torque_safety_factor"],
+                           d.omega * a["speed_safety_factor"], a["voltage_limit_factor"])
+        if r < worst:
+            worst, label = r, d.label
+    return label, worst - 1
+
+
+def check_fixed(rq: SlotRequirement, part: dict, spec: dict) -> ActuatorChoice:
+    """A designer-fixed module, checked against every task (never resized)."""
+    tau, om, th = _scaled(rq, spec)
+    c = _part_choice(part, rq.slot, tau, om, th, spec)
+    c.source = "fixed"
+    label, margin = worst_task(rq, part["tau_peak_Nm"], part["omega_NL_rad_s"], spec)
+    c.notes = [n for n in c.notes] + [f"最紧工况：{label}（扭矩裕度 {margin:+.0%}）"]
+    if c.torque_margin < 0:
+        need = float(np.max(np.maximum(tau, tau / np.maximum(
+            spec["actuators"]["voltage_limit_factor"] * (1 - om / part["omega_NL_rad_s"]), 1e-6))))
+        c.notes.append(f"固定模组扭矩/转速不足：{label} 需要约 {need:.0f} Nm 峰值"
+                       f"（在 {part['omega_NL_rad_s']:.1f} rad/s 空载转速下）")
+    if c.thermal_margin < 0:
+        c.notes.append(f"固定模组发热不足：持续 {th:.1f} Nm（含系数）> 持续扭矩 {c.tau_cont:.1f} Nm")
+    return c

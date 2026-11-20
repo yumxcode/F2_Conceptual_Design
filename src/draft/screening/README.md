@@ -15,6 +15,8 @@ the paper; it reuses `draft.trends` and the robot survey and changes neither.
 | `energy.py` | electrical power, battery, cost of transport |
 | `sizing.py` | `evaluate()`: the mass loop |
 | `sweep.py` | grid sweeps, Pareto ranking |
+| `reach.py` | reach constraints, and the shortest arm that meets them |
+| `design.py` | inverse screening: proportions for fixed modules and reach (`design` command) |
 | `reference.py` | published humanoids from the survey; `benchmark()` |
 | `export.py` | parameter overrides for `src/draft/robots/humanoid` |
 | `report.py` | HTML reports |

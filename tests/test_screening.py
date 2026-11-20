@@ -193,3 +193,64 @@ def test_sweep_grid_is_the_full_product():
     g = grid(make_spec(), {"body.height_m": [1.2, 1.5], "body.leg_ratio": [0.4, 0.45, 0.5]})
     assert len(g) == 6
     assert all(not isinstance(s, Exception) for _, s in g)
+
+
+# ── inputs: absolute lengths, reach, fixed modules; the design search ───────────
+
+def test_absolute_lengths_win_over_ratios():
+    spec = make_spec({"body": {"height_m": 1.6, "leg_length_m": 0.72, "thigh_m": 0.38,
+                               "upper_arm_m": 0.3}})
+    g = geometry(spec)
+    assert g.leg == pytest.approx(0.72) and g.thigh == pytest.approx(0.38)
+    assert g.upper_arm == pytest.approx(0.3)
+
+
+def test_arm_from_reach_is_the_shortest_arm_that_reaches():
+    from draft.screening.reach import check_reach
+    spec = make_spec({"body": {"height_m": 1.5},
+                      "reach": {"floor_pick_height_m": 0.1, "shelf_height_m": 1.7,
+                                "arm_from_reach": True}})
+    g = geometry(spec)
+    checks = check_reach(g, spec)
+    assert all(c["ok"] for c in checks)
+    # one constraint is exactly binding
+    assert min(abs(c["value"] - c["limit"]) for c in checks) < 2e-3
+    # a shorter arm would fail it
+    short = make_spec({"body": {"height_m": 1.5, "upper_arm_m": g.upper_arm * 0.9,
+                                "forearm_m": g.forearm * 0.9, "hand_m": g.hand},
+                       "reach": {"floor_pick_height_m": 0.1, "shelf_height_m": 1.7}})
+    assert not all(c["ok"] for c in check_reach(geometry(short), short))
+
+
+def test_fixed_module_is_checked_not_resized():
+    from draft.screening.actuators import check_fixed
+    spec = make_spec()
+    rq = _req([100, 40], [1.0, 8.0], rms=20)
+    weak = check_fixed(rq, {"name": "w", "tau_peak_Nm": 60, "omega_NL_rad_s": 20, "mass_kg": 1}, spec)
+    strong = check_fixed(rq, {"name": "s", "tau_peak_Nm": 200, "omega_NL_rad_s": 20,
+                              "mass_kg": 2, "tau_cont_Nm": 80}, spec)
+    assert weak.source == "fixed" and weak.tau_peak == 60 and not weak.feasible
+    assert strong.feasible and strong.mass == 2
+
+
+def test_fixed_names_are_validated():
+    from draft.screening.actuators import fixed_parts
+    with pytest.raises(ValueError):
+        fixed_parts(make_spec({"actuators": {"fixed": {"knee": "NO-SUCH-PART"}}}))
+    with pytest.raises(ValueError):
+        make_spec({"actuators": {"fixed": {"ankle_pitch": "RS04"}}})   # parallel ankle
+    assert fixed_parts(make_spec({"actuators": {"fixed": {"knee": "rs-04"}}}))["knee"]["name"] == "RS04"
+
+
+def test_design_search_returns_dimensions():
+    from draft.screening.design import dimensions, run_design
+    spec = make_spec({"body": {"height_m": 1.4},
+                      "tasks": {"run": {"enabled": False}},
+                      "actuators": {"fixed": {"hip_pitch": "RMD-X8-P20-120-E"}}})
+    d = run_design(spec, search={"body.leg_ratio": [0.42, 0.46]}, refine=False,
+                   workers=1, free_mode="trend")
+    assert len(d.rows) == 2 and d.best is not None
+    names = [n for n, _, _ in dimensions(d.best)]
+    assert "腿长（髋关节—踝关节）" in names and "臂长（肩—抓取点）" in names
+    assert d.best.chosen["hip_pitch"].source == "fixed"
+    assert "arm_from_reach" in d.base["reach"] and d.base["reach"]["arm_from_reach"]

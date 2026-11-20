@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .sizing import evaluate
-from .spec import set_dotted, validate
+from .spec import resolve_absolute, set_dotted, validate
 
 
 def grid(base: dict, axes: dict) -> list[tuple[dict, dict]]:
@@ -35,6 +35,7 @@ def grid(base: dict, axes: dict) -> list[tuple[dict, dict]]:
         spec = set_dotted(spec, "name", base["name"] + "-" + "-".join(
             f"{k.split('.')[-1]}={v}" for k, v in point.items()))
         try:
+            resolve_absolute(spec)
             validate(spec)
         except ValueError as exc:
             out.append((point, exc))
@@ -52,7 +53,6 @@ def _one(args):
     except Exception as exc:          # a bad corner of the grid must not kill the sweep
         return {**point, "error": f"{type(exc).__name__}: {exc}", "closed": False}
     row = {**point, **r.summary()}
-    row["feasible"] = (r.closed and row["n_infeasible_actuators"] == 0)
     row["warnings"] = "; ".join(w["name"] for w in r.warnings())
     return row
 

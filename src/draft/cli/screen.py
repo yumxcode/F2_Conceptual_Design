@@ -3,6 +3,7 @@ proportions, battery — before any CAD.
 
     python scripts/screen_humanoid.py concept --config experiments/screening/concept.yaml
     python scripts/screen_humanoid.py concept --config ... --mode catalog --set body.height_m=1.6
+    python scripts/screen_humanoid.py design  --config experiments/screening/design_fixed_modules.yaml
     python scripts/screen_humanoid.py sweep   --config experiments/screening/sweep_height_leg.yaml
     python scripts/screen_humanoid.py benchmark
 
@@ -159,6 +160,45 @@ def cmd_sweep(args) -> int:
     return 0
 
 
+def cmd_design(args) -> int:
+    from ..screening import report
+    from ..screening.design import run_design
+    from ..screening.sweep import write_csv
+    raw = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) if args.config else {}
+    dcfg = (raw or {}).get("design") or {}
+    base = _load(args)
+    objective = args.objective or dcfg.get("objective", "mass")
+    out = _outdir(args, base["name"])
+    t0 = time.time()
+
+    def prog(i, n):
+        print(f"\r  {i}/{n} candidates ({time.time() - t0:.0f} s)", end="", flush=True)
+    d = run_design(base, objective=objective, search=dcfg.get("search"),
+                   refine=dcfg.get("refine", True), workers=args.workers, progress=prog,
+                   free_mode=dcfg.get("free_mode", "catalog"))
+    print()
+    write_csv(d.rows, out / "design_candidates.csv")
+    best_rel = None
+    if d.best is not None:
+        write_concept(d.best, out / "best")
+        best_rel = "best/report.html"
+    report.write(out / "design_report.html", report.design_report(d, best_rel))
+    for n in d.notes:
+        print("  note:", n)
+    if d.best is not None:
+        from ..screening.design import dimensions
+        status = "feasible" if d.feasible else "NOT feasible (closest shown)"
+        print(f"{base['name']}: {status}, {len(d.rows)} candidates, {time.time() - t0:.0f} s")
+        for name, v, note in dimensions(d.best):
+            print(f"  {name:22s} {v:6.3f} m  {note}")
+        for s_, a in d.best.chosen.items():
+            tag = "fixed" if a.source == "fixed" else a.source
+            print(f"  {s_:15s} {a.name:24s} [{tag}] margin {a.torque_margin:+.0%}"
+                  f"{'' if a.feasible else '  <-- short'}")
+    print(f"report: {out / 'design_report.html'}")
+    return 0 if d.feasible else 2
+
+
 def cmd_benchmark(args) -> int:
     from ..screening import report
     from ..screening.reference import benchmark
@@ -180,6 +220,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn, help_ in (("concept", cmd_concept, "screen one concept"),
+                            ("design", cmd_design, "find the proportions that suit fixed modules "
+                                                   "and reach (config `design:` block)"),
                             ("sweep", cmd_sweep, "grid sweep from the config's `sweep:` block"),
                             ("benchmark", cmd_benchmark, "check the model against published humanoids")):
         p = sub.add_parser(name, help=help_)
@@ -188,8 +230,12 @@ def main(argv=None) -> int:
                        help="override a concept key, e.g. body.height_m=1.6 (repeatable)")
         p.add_argument("--out", help="output directory (default generated/screening/<name>)")
         p.add_argument("--mode", choices=("trend", "catalog"), help="actuator selection mode")
-        if name == "sweep":
+        if name in ("sweep", "design"):
             p.add_argument("--workers", type=int, default=None, help="parallel processes")
+        if name == "design":
+            p.add_argument("--objective", choices=("mass", "margin", "cot", "balanced"),
+                           help="ranking of feasible designs (default: design.objective or mass)")
+        if name == "sweep":
             p.add_argument("--no-best", action="store_true", help="skip the catalogue run of the best design")
         p.set_defaults(fn=fn)
     args = ap.parse_args(argv)
