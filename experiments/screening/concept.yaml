@@ -1,0 +1,62 @@
+# 人形机器人概念粗筛 —— 单个方案
+#
+#   python scripts/screen_humanoid.py concept --config experiments/screening/concept.yaml
+#   python scripts/screen_humanoid.py concept --config experiments/screening/concept.yaml --mode catalog
+#
+# 只写需要改的键；没写的键用 src/draft/screening/spec.py 里的默认值。
+# 比例（*_ratio）都是相对身高的比例，除非另有说明。单位：米、千克、秒、弧度。
+
+name: concept-1p5m
+
+body:
+  height_m: 1.50            # 站立身高（脚底到头顶）
+  leg_ratio: 0.45           # (大腿+小腿)/身高，髋关节中心到踝关节中心
+  thigh_fraction: 0.50      # 大腿 / (大腿+小腿)
+  foot_length_ratio: 0.15   # 脚长 / 身高（决定 CoP 余量与踝扭矩需求）
+  hip_width_ratio: 0.13     # 两髋关节中心距 / 身高
+
+dof:
+  waist: [yaw]              # 腰部自由度：yaw / roll / pitch 任意组合
+  wrist: 1                  # 每只手腕 0–3 个自由度
+
+mechanism:
+  ankle: parallel           # serial：俯仰/横滚各一个电机；parallel：两电机连杆并联驱动
+  ankle_motor_location: knee  # ankle：电机在踝处；knee：电机上移到小腿上端（减小腿部惯量）
+  knee_motor_location: knee   # knee：电机在膝处；hip：电机上移到髋部用连杆驱动
+
+mass:
+  end_effector_kg: 0.6      # 每只手 / 夹爪
+  compute_kg: 1.5           # 计算单元
+  sensors_kg: 1.0           # 相机、雷达、IMU
+
+payload:
+  hands_total_kg: 5.0       # 双手共持重量（深蹲搬运、双臂平举）
+
+electrical:
+  bus_voltage_V: 48
+  compute_power_W: 100
+  sensor_power_W: 30
+  battery_Wh_per_kg: 160    # 电池包级能量密度
+  runtime_h: 2.0            # 目标续航（按下面任务剖面）
+
+mission:                    # 续航期间的时间分配，合计 = 1
+  - {task: walk, share: 0.6}
+  - {task: stand, share: 0.3}
+  - {task: stairs, share: 0.05}
+  - {task: squat_lift, share: 0.05}
+
+tasks:
+  walk:       {speed: 1.0, max_speed: 1.5}
+  stairs:     {step_height_m: 0.15, tread_m: 0.28}
+  squat_lift: {depth: 0.55, duration_s: 1.2}
+  run:        {enabled: true, speed: 2.0}
+
+actuators:
+  mode: trend               # trend：按 Draft 拟合趋势连续定型；catalog：从 114 款真实模组中选
+  torque_safety_factor: 1.3
+  speed_safety_factor: 1.15
+  thermal_safety_factor: 1.2
+  categories: [QDD, MidGear, Harmonic]
+  # extra_catalog: experiments/screening/my_actuators.example.yaml   # 你自己的供应商模组
+  # groups:                 # 同组关节用同一型号（减少物料种类）
+  #   leg_big: [hip_pitch, knee]

@@ -21,6 +21,7 @@ topic, and each package states its own claim at the top of its own README.
 | write a `tree.yaml` | [`docs/robot-format.md`](docs/robot-format.md) |
 | recreate a result from the paper | [`docs/reproducing.md`](docs/reproducing.md) |
 | redraw a figure from the paper | [`scripts/figures/README.md`](scripts/figures/README.md) |
+| screen a humanoid concept (actuators, proportions, battery) | [`docs/screening.md`](docs/screening.md) |
 
 [`docs/README.md`](docs/README.md) is the full index.
 
@@ -65,5 +66,7 @@ topic, and each package states its own claim at the top of its own README.
 (the §V sweep) are the paper. `editor/` is not, but it is how a design is
 normally built.
 
-Nothing else is here. The paper's humanoid appears as a generation example and
-as a twin target, never as a policy.
+Nothing else from the paper is here. The paper's humanoid appears as a generation
+example and as a twin target, never as a policy. `screening/` (with
+`scripts/screen_humanoid.py`) was added afterwards for concept-stage humanoid
+selection; it reads `trends/` and the robot survey and must not change them.

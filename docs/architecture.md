@@ -11,6 +11,7 @@
 | `src/draft/tasks/` | The quadruped RL tasks. See [`tasks.md`](tasks.md). |
 | `src/draft/lineup/` | The paper's training and evaluation sweep, driven by `scripts/train_all.py`. See [`reproducing.md`](reproducing.md). |
 | `src/draft/editor/` | The browser editor behind `scripts/robot_tuner.py`. |
+| `src/draft/screening/` | Concept-stage humanoid screening (not the paper): planar inverse dynamics over reference tasks, actuator and battery selection, the mass loop, sweeps. `scripts/screen_humanoid.py`; see [`screening.md`](screening.md). |
 | `datasets/` | The actuator catalogue and robot-description survey, with the numbered stages that fit the trends. |
 | `experiments/` | Design variants, the sweep specification and the frozen results. |
 | `scripts/` | Command-line entry points; `scripts/figures/` has one script per paper figure. |

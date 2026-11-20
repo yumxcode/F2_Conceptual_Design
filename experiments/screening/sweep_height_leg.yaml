@@ -1,0 +1,27 @@
+# 身高 × 腿长比 扫描（1.2–1.8 m）
+#
+#   python scripts/screen_humanoid.py sweep --config experiments/screening/sweep_height_leg.yaml
+#
+# 除 `sweep:` 外与 concept.yaml 同格式。`sweep:` 里每个点号键给一组取值，取全组合。
+# 扫描用趋势模组（连续、快）；最后对最轻的可行方案再用目录真实模组跑一次。
+
+name: sweep-1p2-1p8
+
+body:
+  thigh_fraction: 0.50
+
+tasks:
+  walk:       {speed: 1.0, max_speed: 1.5}
+  stairs:     {step_height_m: 0.15, tread_m: 0.28}
+  squat_lift: {depth: 0.55}
+  run:        {enabled: true, speed: 2.0}
+
+payload:
+  hands_total_kg: 5.0
+
+electrical:
+  runtime_h: 2.0
+
+sweep:
+  body.height_m: [1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8]
+  body.leg_ratio: [0.38, 0.41, 0.44, 0.47, 0.50]

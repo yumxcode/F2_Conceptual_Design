@@ -13,6 +13,7 @@
 | [`tasks.md`](tasks.md) | The quadruped RL tasks. |
 | [`reproducing.md`](reproducing.md) | Recreating the paper's results. |
 | [`contributing.md`](contributing.md) | Development setup and conventions. |
+| [`screening.md`](screening.md) | Concept-stage humanoid screening: actuators, height/leg proportions, battery, before CAD (in Chinese; not part of the paper). |
 
 Figures are committed under [`figures/`](../figures/), named for their figure
 number in the paper. [`scripts/figures/README.md`](../scripts/figures/README.md)

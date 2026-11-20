@@ -28,6 +28,10 @@ python scripts/robot_tuner.py                       # browser editor
 python scripts/generate_robot.py --robot quadruped  # headless, writes generated/
 ```
 
+Screening a humanoid concept before CAD (no MuJoCo or GPU needed):
+`python scripts/screen_humanoid.py concept --config experiments/screening/concept.yaml`
+— see [`docs/screening.md`](docs/screening.md).
+
 Training needs a CUDA GPU: add the `rl` extra (`pip install -e ".[rl]" -c
 constraints.txt`) and see [`docs/tasks.md`](docs/tasks.md).
 Everything else runs on a laptop CPU.
@@ -43,6 +47,7 @@ src/draft/
   tasks/        quadruped locomotion environments and curricula
   lineup/       the paper's training and evaluation sweep
   editor/       the browser editor
+  screening/    concept-stage humanoid screening (actuators, proportions, battery; not the paper)
 datasets/       actuator catalogue and robot-description survey, with fitting scripts
 experiments/    design variants, sweep spec, frozen results
 scripts/        command-line entry points and figure scripts

@@ -59,6 +59,9 @@ rl = [
     "torch==2.12.0",
     "wandb==0.27.0",
 ]
+# Concept screening reports (scripts/screen_humanoid.py); the analysis itself
+# needs only numpy, scipy and pyyaml.
+screening = ["matplotlib>=3.7"]
 # Refitting the trends from the raw catalogues under datasets/.
 datasets = ["matplotlib>=3.7", "robot_descriptions", "pin>=2.7"]
 dev = ["pytest>=7.0"]
